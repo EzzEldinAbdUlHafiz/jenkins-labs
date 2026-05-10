@@ -1,0 +1,72 @@
+pipeline {
+    agent { label 'node-agent' }
+
+    environment {
+        ECR_URI    = '587628267564.dkr.ecr.us-east-1.amazonaws.com/digi-ecr'  // ← your ECR URI
+        AWS_REGION = 'us-east-1'                                               // ← your region
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/EzzEldinAbdUlHafiz/jenkins-labs.git'
+            }
+        }
+
+        stage('Install') {
+            steps {
+                sh '''
+                    export NVM_DIR="$HOME/.nvm"
+                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                    npm install
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    export NVM_DIR="$HOME/.nvm"
+                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                    npm test
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                    echo "🐳 Building Docker image..."
+                    docker build -t ${ECR_URI}:${IMAGE_TAG} .
+                    echo "✅ Successfully tagged ${ECR_URI}:${IMAGE_TAG}"
+                """
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                withAWS(credentials: 'aws-ecr-creds', region: "${AWS_REGION}") {
+                    sh """
+                        echo "🔐 Logging in to ECR..."
+                        aws ecr get-login-password --region ${AWS_REGION} \
+                            | docker login --username AWS --password-stdin ${ECR_URI}
+
+                        echo "📤 Pushing ${ECR_URI}:${IMAGE_TAG} ..."
+                        docker push ${ECR_URI}:${IMAGE_TAG}
+
+                        echo "✅ Push complete"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo "🎉 Build #${env.BUILD_NUMBER} pushed to ECR: ${ECR_URI}:${IMAGE_TAG}" }
+        failure { echo '❌ Build failed — check the stage logs above' }
+        always  { cleanWs() }
+    }
+}
